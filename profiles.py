@@ -1,20 +1,43 @@
 from db import get_conn
+import sqlite3
+from utils import input_str, input_int, UI
 
 def create_profile():
-    name = input("Имя профиля: ")
-    skills = int(input("Количество скиллов: "))
-    repair_min = int(input("Починка ОТ: "))
-    repair_max = int(input("Починка ДО: "))
+    name = input_str("Имя профиля: ")
+    if name is None:
+        return
+
+    skills = input_int("Количество скиллов: ", min_value=0)
+    if skills is None:
+        return
+
+    repair_min = input_int("Починка ОТ: ", min_value=1)
+    if repair_min is None:
+        return
+
+    repair_max = input_int("Починка ДО: ", min_value=1)
+    if repair_max is None:
+        return
+
+    if repair_min > repair_max:
+        UI.error("Починка ОТ не может быть больше Починка ДО")
+        return
 
     conn = get_conn()
     c = conn.cursor()
-    c.execute("""
-        INSERT INTO profiles
-        (name, skills_count, repair_min, repair_max)
-        VALUES (?, ?, ?, ?)
-    """, (name, skills, repair_min, repair_max))
-    conn.commit()
-    conn.close()
+
+    try:
+        c.execute("""
+            INSERT INTO profiles
+            (name, skills_count, repair_min, repair_max)
+            VALUES (?, ?, ?, ?)
+        """, (name, skills, repair_min, repair_max))
+        conn.commit()
+        UI.success("Профиль успешно создан")
+    except sqlite3.IntegrityError:
+        UI.error("Ошибка: профиль с таким именем уже существует")
+    finally:
+        conn.close()
 
 def select_profile():
     conn = get_conn()
@@ -27,12 +50,12 @@ def select_profile():
         return None
 
     for i, (id, _, _, _, _) in enumerate(rows, 1):
-        print("--------------------")
-        print(f"{i} - Профиль:")
+        UI.info("--------------------")
+        UI.info(f"{i} - Профиль:")
         display_profile(id)
-    print("--------------------")
+    UI.info("--------------------")
 
-    print("0 - Назад")
+    UI.info("0 - Назад")
     ch = int(input("> "))
     if ch == 0:
         return None
@@ -60,11 +83,10 @@ def display_profile(profile_id=None):
     conn.close()
 
     if not row:
-        print(f"Профиль {profile_id} не найден.")
+        UI.warning(f"Профиль {profile_id} не найден.")
         return
 
-    print(f"ID: {row[0]}\nИмя: {row[1]}\nКол-во скиллов: {row[2]}\nПочинка: {row[3]}-{row[4]}")
-
+    UI.info(f"ID: {row[0]}\nИмя: {row[1]}\nКол-во скиллов: {row[2]}\nПочинка: {row[3]}-{row[4]}")
 
 def edit_profile(profile_id):
     conn = get_conn()
@@ -79,12 +101,12 @@ def edit_profile(profile_id):
 
     if not row:
         conn.close()
-        print("Профиль не найден")
+        UI.warning("Профиль не найден")
         return
 
     name, skills, r_min, r_max = row
 
-    print("Редактирование профиля (Enter - оставить без изменений)")
+    UI.info("Редактирование профиля (Enter - оставить без изменений)")
     new_name = input(f"Имя [{name}]: ") or name
     new_skills = input(f"Кол-во скиллов [{skills}]: ")
     new_rmin = input(f"Починка ОТ [{r_min}]: ")
@@ -104,4 +126,4 @@ def edit_profile(profile_id):
 
     conn.commit()
     conn.close()
-    print("Профиль обновлён")
+    UI.success("Профиль обновлён")

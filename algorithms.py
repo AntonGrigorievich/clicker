@@ -1,10 +1,25 @@
 from db import get_conn
+from utils import input_str, input_int, UI
+
+BATTLE_TYPES = {
+    "1": "3x3",
+    "2": "1x1",
+    "3": "dungeon",
+}
 
 def create_algorithm():
-    name = input("Имя алгоритма: ")
+    name = input_str("Имя алгоритма: ")
+    if name is None:
+        return
 
     conn = get_conn()
     c = conn.cursor()
+    c.execute("SELECT 1 FROM algorithms WHERE name = ?", (name,))
+    if c.fetchone():
+        UI.error(f"Алгоритм с именем '{name}' уже существует")
+        conn.close()
+        return
+
     c.execute(
         "INSERT INTO algorithms (name) VALUES (?)",
         (name,)
@@ -12,8 +27,9 @@ def create_algorithm():
     alg_id = c.lastrowid
 
     order = 1
+    steps_added = False
     while True:
-        print("""
+        UI.info("""
 1 - 3x3
 2 - 1x1
 3 - Подземелье
@@ -24,16 +40,28 @@ def create_algorithm():
         if ch == "0":
             break
 
-        battle_type = {"1": "3x3", "2": "1x1", "3": "dungeon"}[ch]
-        count = int(input("Количество боёв: "))
+        if ch not in BATTLE_TYPES:
+            UI.error("Неверный тип боя")
+            continue
+
+        count = input_int("Количество боёв: ", min_value=1)
+        if count is None:
+            continue
 
         c.execute("""
             INSERT INTO algorithm_steps
             (algorithm_id, step_order, battle_type, count)
             VALUES (?, ?, ?, ?)
-        """, (alg_id, order, battle_type, count))
+        """, (alg_id, order, BATTLE_TYPES[ch], count))
 
+        steps_added = True
         order += 1
+    
+    if not steps_added:
+        UI.error("Алгоритм не содержит шагов и не будет сохранён")
+        conn.rollback()
+        conn.close()
+        return
 
     conn.commit()
     conn.close()
@@ -67,14 +95,14 @@ def select_algorithm():
     if not rows:
         return None
 
-    print("Выберите алгоритм:")
+    UI.info("Выберите алгоритм:")
     for i, (alg_id, _) in enumerate(rows, start=1):
-        print("--------------------")
-        print(f"{i} - Алгоритм:")
+        UI.info("--------------------")
+        UI.info(f"{i} - Алгоритм:")
         display_algorithm(alg_id)
-    print("--------------------")
+    UI.info("--------------------")
 
-    print("0 - Назад")
+    UI.info("0 - Назад")
 
     while True:
         try:
@@ -89,7 +117,7 @@ def select_algorithm():
         except ValueError:
             pass
 
-        print("Неверный ввод")
+        UI.error("Неверный ввод")
 
 
 def display_algorithm(algorithm_id):
@@ -101,11 +129,11 @@ def display_algorithm(algorithm_id):
 
     if not alg:
         conn.close()
-        print("Алгоритм не найден")
+        UI.error("Алгоритм не найден")
         return
 
-    print(f"«{alg[0]}»")
-    print("Шаги:")
+    UI.info(f"«{alg[0]}»")
+    UI.info("Шаги:")
     c.execute("""
 
         SELECT step_order, battle_type, count
@@ -118,8 +146,8 @@ def display_algorithm(algorithm_id):
     conn.close()
 
     for order, btype, count in steps:
-        print(f"  {order}. {btype} × {count}")
-    print()
+        UI.info(f"  {order}. {btype} × {count}")
+    UI.info()
 
 
 def clear_algorithm_steps(algorithm_id):
@@ -139,55 +167,73 @@ def edit_algorithm(algorithm_id):
 
     if not alg:
         conn.close()
-        print("Алгоритм не найден")
+        UI.error("Алгоритм не найден")
         return
 
     name = alg[0]
 
-    print("Редактирование алгоритма (Enter — оставить)")
-    new_name = input(f"Имя [{name}]: ") or name
+    UI.info("Редактирование алгоритма (Enter — оставить)")
+    new_name = input_str(f"Имя [{name}]: ", allow_empty=True)
 
-    c.execute("""
-        UPDATE algorithms
-        SET name = ?
-        WHERE id = ?
-    """, (
-        new_name,
-        algorithm_id
-    ))
+    if new_name:
+        c.execute(
+            "SELECT 1 FROM algorithms WHERE name = ? AND id != ?",
+            (new_name, algorithm_id)
+        )
+        if c.fetchone():
+            UI.error("Алгоритм с таким именем уже существует")
+            conn.close()
+            return
+
+        c.execute(
+            "UPDATE algorithms SET name = ? WHERE id = ?",
+            (new_name, algorithm_id)
+        )
 
     conn.commit()
     conn.close()
 
     clear_algorithm_steps(algorithm_id)
 
-    print("Введите новые шаги алгоритма:")
-
-    conn = get_conn()
-    c = conn.cursor()
+    UI.info("\nВведите новые шаги алгоритма")
     order = 1
+    steps_added = False
 
     while True:
-        print("""
+        UI.info("""
 1 - 3x3
 2 - 1x1
 3 - Подземелье
 0 - Сохранить
 """)
-        ch = input("> ")
+        ch = input("> ").strip()
+
         if ch == "0":
             break
 
-        battle_type = {"1": "3x3", "2": "1x1", "3": "dungeon"}[ch]
-        count = int(input("Количество боёв: "))
+        if ch not in BATTLE_TYPES:
+            UI.error("Неверный тип боя")
+            continue
+
+        count = input_int("Количество боёв: ", min_value=1)
+        if count is None:
+            continue
 
         c.execute("""
             INSERT INTO algorithm_steps
             (algorithm_id, step_order, battle_type, count)
             VALUES (?, ?, ?, ?)
-        """, (algorithm_id, order, battle_type, count))
+        """, (algorithm_id, order, BATTLE_TYPES[ch], count))
+
+        steps_added = True
         order += 1
+
+    if not steps_added:
+        UI.error("Алгоритм без шагов не может быть сохранён")
+        conn.rollback()
+        conn.close()
+        return
 
     conn.commit()
     conn.close()
-    print("Алгоритм обновлён")
+    UI.success("Алгоритм успешно обновлён")
