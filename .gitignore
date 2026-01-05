@@ -1,4 +1,4 @@
-images/
+images*/
 .env
 build/
 dist/
@@ -7,3 +7,4 @@ venv
 *.log
 *.pyc
 .DS_Store
+*.spec

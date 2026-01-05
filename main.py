@@ -2,6 +2,7 @@ from pathlib import Path
 import pyautogui
 import time
 import random
+import dotenv
 
 from db import init_db, drop_table
 from logger import logger
@@ -13,6 +14,7 @@ from utils import UI
 pyautogui.PAUSE = 0.25
 pyautogui.FAILSAFE = True
 
+DEBUG = dotenv.get_key(dotenv.find_dotenv(), "DEBUG") in ["True", 1, "1", True]
 
 class DogiatorsAutoClicker:
     def __init__(self):
@@ -419,19 +421,25 @@ class DogiatorsAutoClicker:
         logger.debug("Проверка на окончания боя...")
         res = -1
         try:
-            center_x, center_y = pyautogui.locateCenterOnScreen("images/victory.png", confidence=0.95)
-            if center_x is not None and center_y is not None:
+            center = pyautogui.locateCenterOnScreen("images/victory.png", confidence=0.95)
+            if center:
                 res = 1
         except pyautogui.ImageNotFoundException:
             pass
+        except Exception as e:
+            if DEBUG:
+                print(e)
 
         if res == -1 :
             try:
-                center_x, center_y = pyautogui.locateCenterOnScreen("images/defeat.png", confidence=0.95)
-                if center_x is not None and center_y is not None:
+                center = pyautogui.locateCenterOnScreen("images/defeat.png", confidence=0.95)
+                if center:
                     res = 0
             except pyautogui.ImageNotFoundException:
                 pass
+            except Exception as e:
+                if DEBUG:
+                    print(e)
 
         if res != -1 and self.find_and_click_image("images/continue_after_battle.png"):
             self.repair_counter += 1

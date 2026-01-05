@@ -1,3 +1,5 @@
+from colorama import Fore, Style, init
+
 def input_int(prompt, min_value=None, max_value=None):
     try:
         value = int(input(prompt))
@@ -22,28 +24,24 @@ def input_str(prompt, allow_empty=False):
         return None
     return value
 
-class UI:
-    BLUE = "\033[94m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    RED = "\033[91m"
-    RESET = "\033[0m"
+init(autoreset=True)
 
+class UI:
     @staticmethod
     def info(text=""):
-        print(f"{UI.BLUE}{text}{UI.RESET}")
+        print(Fore.BLUE + text + Style.RESET_ALL)
 
     @staticmethod
     def success(text=""):
-        print(f"{UI.GREEN}{text}{UI.RESET}")
+        print(Fore.GREEN + text + Style.RESET_ALL)
 
     @staticmethod
     def warning(text=""):
-        print(f"{UI.YELLOW}{text}{UI.RESET}")
+        print(Fore.YELLOW + text + Style.RESET_ALL)
 
     @staticmethod
     def error(text=""):
-        print(f"{UI.RED}{text}{UI.RESET}")
+        print(Fore.RED + text + Style.RESET_ALL)
 
     @staticmethod
     def plain(text=""):
