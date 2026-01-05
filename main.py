@@ -1,15 +1,18 @@
+from multiprocessing import Process
 from pathlib import Path
 import pyautogui
 import time
 import random
 import dotenv
+import os
 
 from db import init_db, drop_table
 from logger import logger
-from profiles import select_profile, create_profile, display_profile, edit_profile
+from profiles import select_profile, create_profile, display_profile, edit_profile, get_all_profiles
 from algorithms import create_algorithm, select_algorithm, run_algorithm, edit_algorithm, display_algorithm
 from stats import *
 from utils import UI
+from windows_provider import WindowProvider
 
 pyautogui.PAUSE = 0.25
 pyautogui.FAILSAFE = True
@@ -17,7 +20,7 @@ pyautogui.FAILSAFE = True
 DEBUG = dotenv.get_key(dotenv.find_dotenv(), "DEBUG") in ["True", 1, "1", True]
 
 class DogiatorsAutoClicker:
-    def __init__(self):
+    def __init__(self, game_window_region=None, profile=None):
         self.battle_count = 0
         self.screen_width, self.screen_height = pyautogui.size()
         self.click_delay = random.uniform(0.1, 0.3)
@@ -25,11 +28,15 @@ class DogiatorsAutoClicker:
         self.next_repair = random.randint(10, 15)
         self.current_repair_index = 0
         self.cur_skill = 0
-        self.current_profile = None
+        self.current_profile = profile
         self.current_algorithm = None
         self.battle_boosts = False
         self.no_energy_mode = False
         self._missing_images = set()
+        self.region = game_window_region
+
+    def _region(self):
+        return self.region
 
     def random_move(self):
         """Случайное движение мыши"""
@@ -74,10 +81,15 @@ class DogiatorsAutoClicker:
         start_time = time.time()
         while time.time() - start_time < timeout:
             try:
-                center_x, center_y = pyautogui.locateCenterOnScreen(image_path, confidence=confidence)
+                center = pyautogui.locateCenterOnScreen(
+                    image_path,
+                    confidence=confidence,
+                    region=self._region(),
+                )
 
-                if center_x is not None and center_y is not None:
-                    self.smart_click(center_x, center_y)
+                if center:
+                    x, y = center
+                    self.smart_click(x, y)
                     return True
             except pyautogui.ImageNotFoundException:
                 pass
@@ -120,7 +132,7 @@ class DogiatorsAutoClicker:
             #     locks = []
 
             try:    
-                buttons = list(pyautogui.locateAllOnScreen("images/start_battle.png", confidence=0.88))
+                buttons = list(pyautogui.locateAllOnScreen("images/start_battle.png", confidence=0.88, region=self._region()))
             except Exception:
                 buttons = []
 
@@ -370,7 +382,7 @@ class DogiatorsAutoClicker:
         start_time = time.time()
         while time.time() - start_time < 0.3:
             try:
-                center_x, center_y = pyautogui.locateCenterOnScreen(str(skill_img), confidence=0.95)
+                center_x, center_y = pyautogui.locateCenterOnScreen(str(skill_img), confidence=0.95, region=self._region())
 
                 if center_x is not None and center_y is not None:
                     logger.debug(f"Навык найден")
@@ -388,7 +400,7 @@ class DogiatorsAutoClicker:
             start_time = time.time()
             while time.time() - start_time < 0.3:
                 try:
-                    center_x, center_y = pyautogui.locateCenterOnScreen(str(skill_images[i]), confidence=0.95)
+                    center_x, center_y = pyautogui.locateCenterOnScreen(str(skill_images[i]), confidence=0.95, region=self._region())
 
                     if center_x is not None and center_y is not None:
                         pyautogui.doubleClick(center_x, center_y) # mac // 2 
@@ -405,7 +417,7 @@ class DogiatorsAutoClicker:
             start_time = time.time()
             while time.time() - start_time < 0.3:
                 try:
-                    center_x, center_y = pyautogui.locateCenterOnScreen(str(skill_images[i]), confidence=0.95)
+                    center_x, center_y = pyautogui.locateCenterOnScreen(str(skill_images[i]), confidence=0.95, region=self._region())
 
                     if center_x is not None and center_y is not None:
                         pyautogui.doubleClick(center_x, center_y) # mac // 2
@@ -421,7 +433,7 @@ class DogiatorsAutoClicker:
         logger.debug("Проверка на окончания боя...")
         res = -1
         try:
-            center = pyautogui.locateCenterOnScreen("images/victory.png", confidence=0.95)
+            center = pyautogui.locateCenterOnScreen("images/victory.png", confidence=0.95, region=self._region())
             if center:
                 res = 1
         except pyautogui.ImageNotFoundException:
@@ -432,7 +444,7 @@ class DogiatorsAutoClicker:
 
         if res == -1 :
             try:
-                center = pyautogui.locateCenterOnScreen("images/defeat.png", confidence=0.95)
+                center = pyautogui.locateCenterOnScreen("images/defeat.png", confidence=0.95, region=self._region())
                 if center:
                     res = 0
             except pyautogui.ImageNotFoundException:
@@ -510,114 +522,237 @@ def select_date_range():
     UI.warning("Неверный выбор, показана статистика за всё время")
     return None, None
 
+def assign_profiles_to_windows(windows, profiles):
+    remaining_profiles = profiles.copy()
+
+    for i, window in enumerate(windows, 1):
+        UI.info("\n----------------------------")
+        UI.info(f"Окно #{i}: {window.win.title}")
+        UI.info("----------------------------")
+
+        if not remaining_profiles:
+            UI.warning("Доступных профилей больше нет")
+            break
+
+        UI.info("Выберите профиль для этого окна:")
+        for idx, prof in enumerate(remaining_profiles, 1):
+            UI.info(f"{idx} - {prof[1]}")
+
+        UI.info("0 - Пропустить это окно")
+
+        while True:
+            try:
+                choice = int(input("> "))
+
+                if choice == 0:
+                    break
+
+                if 1 <= choice <= len(remaining_profiles):
+                    window.profile = remaining_profiles.pop(choice - 1)
+                    break
+
+            except ValueError:
+                pass
+
+            print("Неверный ввод")
+
+import os
+
+def run_clicker_process(region, profile, algorithm_id):
+    try:
+        logger.info(
+            f"[PID {os.getpid()}] Старт профиля {profile[1]}"
+        )
+
+        clicker = DogiatorsAutoClicker(
+            game_window_region=region,
+            profile=profile
+        )
+
+        clicker.prebattle_warnings()
+
+        run_algorithm(clicker, algorithm_id)
+
+        logger.info(
+            f"[PID {os.getpid()}] Профиль {profile[1]} завершён"
+        )
+
+    except KeyboardInterrupt:
+        logger.info(
+            f"[PID {os.getpid()}] Процесс остановлен пользователем"
+        )
+
+    except Exception as e:
+        logger.error(
+            f"[PID {os.getpid()}] Ошибка процесса: {e}"
+        )
+
+def action_assign_profiles():
+    windows = WindowProvider("Dogiators").get_windows()
+    profiles = get_all_profiles()
+
+    if not profiles:
+        UI.warning("Профили отсутствуют. Создайте новый профиль.")
+        return []
+
+    if not windows:
+        UI.warning("Окна с игрой не найдены.")
+        return []
+
+    assign_profiles_to_windows(windows, profiles)
+
+    clickers = []
+    for window in windows:
+        if window.profile:
+            clickers.append(
+                DogiatorsAutoClicker(
+                    game_window_region=window.region,
+                    profile=window.profile
+                )
+            )
+
+    UI.success(f"Профили назначены. Активных окон: {len(clickers)}")
+    return clickers
+
+def action_run_algorithm(clickers, algorithm):
+    if not clickers:
+        UI.warning("Сначала выберите профили для окон.")
+        return
+
+    if not algorithm:
+        UI.warning("Сначала выберите алгоритм.")
+        return
+
+    from multiprocessing import Process
+    processes = []
+
+    UI.info(f"Запуск алгоритма: {algorithm[1]}")
+
+    for clicker in clickers:
+        p = Process(
+            target=run_clicker_process,
+            args=(
+                clicker.region,
+                clicker.current_profile,
+                algorithm[0]
+            )
+        )
+        p.start()
+        processes.append(p)
+
+    UI.success(f"Запущено процессов: {len(processes)}")
+
+    try:
+        for p in processes:
+            p.join()
+    except KeyboardInterrupt:
+        UI.warning("Остановка всех процессов...")
+        for p in processes:
+            if p.is_alive():
+                p.terminate()
+        UI.info("Все процессы остановлены")
+
+def action_show_stats():
+    date_from, date_to = select_date_range()
+
+    UI.info("\n=== ОБЩАЯ СТАТИСТИКА ===")
+    games, wins, losses, winrate = stats_overall(date_from, date_to)
+    UI.info(f"Бои: {games}")
+    UI.info(f"Победы: {wins} | Поражения: {losses}")
+    UI.info(f"Винрейт: {winrate}%")
+
+    UI.info("\n=== ПО ПРОФИЛЯМ ===")
+    for profile, g, w, l, wr in stats_by_profiles(date_from, date_to):
+        UI.info(f"{profile}: {wr}% ({w}/{g})")
+
+    UI.info("\n=== ПО АЛГОРИТМАМ ===")
+    for alg, g, w, l, wr in stats_by_algorithms(date_from, date_to):
+        UI.info(f"{alg}: {wr}% ({w}/{g})")
+
+    UI.info("\n=== ПО РЕЖИМАМ ===")
+    for mode, g, w, l, wr in stats_by_battle_type(date_from, date_to):
+        UI.info(f"{mode}: {wr}% ({w}/{g})")
+
+def action_select_algorithm():
+    algorithm = select_algorithm()
+    if not algorithm:
+        UI.warning("Алгоритм не выбран.")
+        return None
+
+    UI.success(f"Выбран алгоритм: {algorithm[1]}")
+    return algorithm
+
+
+def show_menu(selected_algorithm):
+    UI.info("~~~~~~~~~~~~ МЕНЮ ~~~~~~~~~~~~")
+
+    UI.success("4 - Выбрать профили для окон")
+    UI.success("5 - Редактировать профили")
+    UI.success("6 - Создать профиль")
+
+    UI.warning("7 - Создать алгоритм")
+    UI.warning("8 - Выбрать алгоритм")
+
+    if selected_algorithm:
+        UI.success(f"9 - Запустить алгоритм ({selected_algorithm[1]})")
+    else:
+        UI.warning("9 - Запустить алгоритм (не выбран)")
+
+    UI.warning("10 - Редактировать алгоритмы")
+    UI.error("11 - Статистика")
+
+    UI.info("0 - Выход")
+    UI.info("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+
 
 def main():
-    clicker = DogiatorsAutoClicker()
-
+    clickers = []
+    selected_algorithm = None
 
     while True:
-        UI.info("~~~~~~~~~~~~МЕНЮ~~~~~~~~~~~~")
-        UI.info("1 - Алгоритм для подземелья")
-        UI.info("2 - Алгоритм для арены 3 на 3")
-        UI.info("3 - Алгоритм для арены 1 на 1")
-        UI.success("4 - Выбрать профиль")
-        UI.success("5 - Редактировать профили")
-        UI.success("6 - Создать профиль")
-        UI.warning("7 - Создать алгоритм")
-        UI.warning("8 - Запустить алгоритм")
-        UI.warning("9 - Редактировать алгоритмы")
-        UI.error("10 - Статистика")
-        UI.error(f"11 - Переключить боевые усилители (сейчас {'вкл' if clicker.battle_boosts else 'выкл'})")
-        UI.error(f"12 - Переключить режим игры без энергии (сейчас {'вкл' if clicker.no_energy_mode else 'выкл'})")
-        UI.info("0 - Выход")
-        UI.info("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-        choice = input("\n> ")
+        show_menu(selected_algorithm)
+        choice = input("\n> ").strip()
 
-        if choice == "1":
-            clicker.prebattle_warnings()
-            keep_playing = True
-            while keep_playing:
-                keep_playing = clicker.run_battle("dungeon")
-        elif choice == "2":
-            clicker.prebattle_warnings()
-            keep_playing = True
-            while keep_playing:
-                keep_playing = clicker.run_battle("3x3")
-        elif choice == "3":
-            clicker.prebattle_warnings()
-            keep_playing = True
-            while keep_playing:
-                keep_playing = clicker.run_battle("1x1")
+        if choice == "0":
+            UI.info("Выход...")
+            break
+
         elif choice == "4":
-            clicker.current_profile = select_profile()
-            if clicker.current_profile:
-                UI.info("Выбран профиль:")
-                display_profile(clicker.current_profile[0])        
-                clicker.next_repair = random.randint(clicker.current_profile[3], clicker.current_profile[4])
-                logger.debug(f"Починка через {clicker.next_repair} боев")
-            else:
-                UI.warning("Профили отсутствуют. Создайте новый профиль.")
+            clickers = action_assign_profiles()
+
         elif choice == "5":
             profile = select_profile()
             if profile:
                 edit_profile(profile[0])
+
         elif choice == "6":
             create_profile()
+
         elif choice == "7":
             create_algorithm()
+
         elif choice == "8":
-            clicker.current_algorithm = select_algorithm()
-            if clicker.current_algorithm:
-                clicker.prebattle_warnings()
-                UI.info(f"Запуск алгоритма: {clicker.current_algorithm[1]}")
-                run_algorithm(clicker, clicker.current_algorithm[0])
-                clicker.find_and_click_image("images/collect_reward.png")
-            else:
-                UI.warning("Алгоритмы отсутствуют. Создайте новый алгоритм.")
+            selected_algorithm = action_select_algorithm()
+
         elif choice == "9":
+            action_run_algorithm(clickers, selected_algorithm)
+
+        elif choice == "10":
             algorithm = select_algorithm()
             if algorithm:
                 UI.info("Редактирование алгоритма:")
                 display_algorithm(algorithm[0])
                 edit_algorithm(algorithm[0])
-        elif choice == "10":
-            date_from, date_to = select_date_range()
 
-            UI.info("\n=== ОБЩАЯ СТАТИСТИКА ===")
-            games, wins, losses, winrate = stats_overall(date_from, date_to)
-            UI.info(f"Бои: {games}")
-            UI.info(f"Победы: {wins} | Поражения: {losses}")
-            UI.info(f"Винрейт: {winrate}%")
-            UI.info("\n=== ПО ПРОФИЛЯМ ===")
-            for profile, g, w, l, wr in stats_by_profiles(date_from, date_to):
-                UI.info(f"{profile}: {wr}% ({w}/{g})")
-
-            UI.info("\n=== ПО АЛГОРИТМАМ ===")
-            for alg, g, w, l, wr in stats_by_algorithms(date_from, date_to):
-                UI.info(f"{alg}: {wr}% ({w}/{g})")
-
-            UI.info("\n=== ПРОФИЛЬ → АЛГОРИТМЫ ===")
-            if clicker.current_profile is not None:
-                UI.info(f"Профиль: {clicker.current_profile[1]}")
-                rows = stats_profile_algorithms(clicker.current_profile[0], date_from, date_to)
-            else:
-                UI.info("Профиль: ANY")
-                rows = stats_profile_algorithms(None, date_from, date_to)
-
-            for alg, g, w, l, wr in rows:
-                UI.info(f"{alg}: {wr}% ({w}/{g})")
-            UI.info("\n=== ПО РЕЖИМАМ ===")
-            for mode, g, w, l, wr in stats_by_battle_type(date_from, date_to):
-                UI.info(f"{mode}: {wr}% ({w}/{g})\n")
         elif choice == "11":
-            clicker.battle_boosts = not clicker.battle_boosts
-        elif choice == "12":
-            clicker.no_energy_mode = not clicker.no_energy_mode
-        elif choice == "0":
-            UI.info("Выход...")
-            break
+            action_show_stats()
+
         else:
             UI.warning("Неверный выбор")
+
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     init_db()
     main()

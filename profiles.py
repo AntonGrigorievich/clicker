@@ -127,3 +127,15 @@ def edit_profile(profile_id):
     conn.commit()
     conn.close()
     UI.success("Профиль обновлён")
+
+def get_all_profiles():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, name, skills_count, repair_min, repair_max
+        FROM profiles
+        ORDER BY id
+    """)
+    rows = c.fetchall()
+    conn.close()
+    return rows
