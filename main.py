@@ -1,15 +1,17 @@
-from multiprocessing import Process
+from multiprocessing import Process, Event
 from pathlib import Path
+from datetime import datetime
 import pyautogui
 import time
 import random
 import dotenv
 import os
+import cv2
 
 from db import init_db, drop_table
 from logger import logger
-from profiles import select_profile, create_profile, display_profile, edit_profile, get_all_profiles
-from algorithms import create_algorithm, select_algorithm, run_algorithm, edit_algorithm, display_algorithm
+from profiles import select_profile, create_profile, display_profile, edit_profile, get_all_profiles, delete_profile
+from algorithms import create_algorithm, select_algorithm, run_algorithm, edit_algorithm, display_algorithm, delete_algorithm
 from stats import *
 from utils import UI
 from windows_provider import WindowProvider
@@ -20,12 +22,12 @@ pyautogui.FAILSAFE = True
 DEBUG = dotenv.get_key(dotenv.find_dotenv(), "DEBUG") in ["True", 1, "1", True]
 
 class DogiatorsAutoClicker:
-    def __init__(self, game_window_region=None, profile=None):
+    def __init__(self, game_window_region=None, profile=None, stop_event=None):
         self.battle_count = 0
         self.screen_width, self.screen_height = pyautogui.size()
         self.click_delay = random.uniform(0.1, 0.3)
         self.repair_counter = 0
-        self.next_repair = random.randint(10, 15)
+        self.next_repair = random.randint(1000, 2000)
         self.current_repair_index = 0
         self.cur_skill = 0
         self.current_profile = profile
@@ -34,6 +36,7 @@ class DogiatorsAutoClicker:
         self.no_energy_mode = False
         self._missing_images = set()
         self.region = game_window_region
+        self.stop_event = stop_event
 
     def _region(self):
         return self.region
@@ -56,7 +59,7 @@ class DogiatorsAutoClicker:
 
         pyautogui.mouseDown()
 
-        move_distance = random.randint(100, 200)
+        move_distance = random.randint(500, 600)
         pyautogui.moveRel(move_distance, 0, duration=random.uniform(0.1, 0.2))
         pyautogui.mouseUp()
 
@@ -70,6 +73,36 @@ class DogiatorsAutoClicker:
 
         self.random_move()
 
+    def find_image(self, image_path, confidence=0.7, timeout=0.3):
+        if not Path(image_path).is_file():
+            if image_path not in self._missing_images:
+                self._missing_images.add(image_path)
+                logger.warning(f"Изображение {image_path} не найдено.")
+            return False
+
+        start_time = time.time()
+        while not self.stop_event.is_set() and time.time() - start_time < timeout:
+            try:
+                center = pyautogui.locateCenterOnScreen(
+                    image_path,
+                    confidence=confidence,
+                    region=self._region(),
+                )
+
+                if center:
+                    return center
+            except pyautogui.ImageNotFoundException:
+                pass
+            except Exception as e:
+                if image_path not in self._missing_images:
+                    self._missing_images.add(image_path)
+                    logger.warning(
+                        f"Ошибка поиска {image_path}: {e}"
+                    )
+                return False
+            time.sleep(0.15)
+        return False
+
     def find_and_click_image(self, image_path, confidence=0.7, timeout=0.3):
         """Поиск и клик по изображению на экране"""
         if not Path(image_path).is_file():
@@ -79,7 +112,7 @@ class DogiatorsAutoClicker:
             return False
 
         start_time = time.time()
-        while time.time() - start_time < timeout:
+        while not self.stop_event.is_set() and time.time() - start_time < timeout:
             try:
                 center = pyautogui.locateCenterOnScreen(
                     image_path,
@@ -97,9 +130,10 @@ class DogiatorsAutoClicker:
                 if image_path not in self._missing_images:
                     self._missing_images.add(image_path)
                     logger.warning(
-                        f"Изображение {image_path} не найдено: {e}"
+                        f"Ошибка поиска {image_path}: {e}"
                     )
                 return False
+            time.sleep(0.15)
         return False
 
 
@@ -108,13 +142,17 @@ class DogiatorsAutoClicker:
         if (self.repair_counter >= self.next_repair and
                 self.find_and_click_image("images/inventory_button.png", timeout=2)):
             self.repair_counter = 0
-            self.next_repair = random.randint(10, 15)
+            if self.current_profile:
+                self.next_repair = random.randint(
+                    self.current_profile[3],
+                    self.current_profile[4]
+                )
             return True
         return False
 
     def repair_equipment(self):
         """Починка оборудования"""
-        logger.info("Починка оборудования...")
+        logger.debug("Починка оборудования...")
 
         if self.find_and_click_image("images/repair_button.png", timeout=2):
             self.find_and_click_image("images/confirm_repair.png")
@@ -132,8 +170,12 @@ class DogiatorsAutoClicker:
             #     locks = []
 
             try:    
-                buttons = list(pyautogui.locateAllOnScreen("images/start_battle.png", confidence=0.88, region=self._region()))
-            except Exception:
+                buttons = list(pyautogui.locateAllOnScreen(
+                    "images/start_battle.png",
+                    confidence=0.78,
+                    region=self._region()
+                ))
+            except Exception as e:
                 buttons = []
 
             if len(buttons) > 0:
@@ -151,7 +193,7 @@ class DogiatorsAutoClicker:
             elif len(buttons) == 0:
                 return
         except Exception as e: 
-            logger.error(e)
+            UI.error(e)
             return
 
 
@@ -159,12 +201,12 @@ class DogiatorsAutoClicker:
         """Алгоритм для подземелья"""
         logger.debug("Запуск алгоритма для подземелья...")
 
-        while True:
+        while not self.stop_event.is_set():
             try:
                 if not self.no_energy_mode:
                     if self.find_and_click_image("images/no_energy.png"):
-                        logger.info("Не осталось энергии, остановка алгоритма подземелья...")
-                        logger.info(f"Сыграно боев: {self.battle_count}")
+                        UI.info("Не осталось энергии, остановка алгоритма подземелья...")
+                        UI.info(f"Сыграно боев: {self.battle_count}")
                         return 0
                 else:
                     self.find_and_click_image("images/no_energy_continue.png")
@@ -174,9 +216,15 @@ class DogiatorsAutoClicker:
                 if self.battle_boosts:
                     self.use_battle_boosts()
 
+                logger.debug("Проверка необходимости починки")
+                if self.check_repair_needed():
+                    logger.debug("Необходима починка")
+                    self.repair_equipment()
+
                 logger.debug("Поиск кнопки подземелья")
                 self.find_and_click_image("images/dungeon_button.png", timeout=2)
 
+                logger.debug("Поиск кнопки начала боя")
                 self.start_battle()
 
                 logger.debug("Поиск кнопки авто режима")
@@ -189,7 +237,7 @@ class DogiatorsAutoClicker:
                         save_battle_stat(
                             self.current_profile[0],
                             self.current_algorithm[0],
-                            "dungeon",
+                            "Подземелье",
                             battle_res
                         )
                         logger.debug("Итог боя сохранен")
@@ -198,7 +246,7 @@ class DogiatorsAutoClicker:
                         save_battle_stat(
                             self.current_profile[0] if self.current_profile is not None else None,
                             self.current_algorithm[0] if self.current_algorithm is not None else None,
-                            "dungeon",
+                            "Подземелье",
                             battle_res,
                         )
                         logger.debug("Итог боя сохранен без привязки")
@@ -212,31 +260,29 @@ class DogiatorsAutoClicker:
 
                 self.open_chest()
 
-                self.find_and_click_image("images/home_button.png")
-                if self.check_repair_needed():
-                    logger.debug("Необходима починка")
-                    self.repair_equipment()
+                #self.find_and_click_image("images/home_button.png")
+                
 
                 self.use_skills()
 
             except KeyboardInterrupt:
-                logger.info("Остановка алгоритма подземелья...")
-                logger.info(f"Сыграно боев: {self.battle_count}")
+                UI.info("Остановка алгоритма подземелья...")
+                UI.info(f"Сыграно боев: {self.battle_count}")
                 return 0
             except Exception as e:
-                logger.error(f"Ошибка в алгоритме подземелья: {e}")
+                UI.error(f"Ошибка в алгоритме подземелья: {e}")
                 continue
 
     def arena_3v3_algorithm(self):
         """Алгоритм для арены 3 на 3"""
-        logger.info("Запуск алгоритма для арены 3 на 3...")
+        UI.info("Запуск алгоритма для арены 3 на 3...")
 
-        while True:
+        while not self.stop_event.is_set():
             try:
                 if not self.no_energy_mode:
                     if self.find_and_click_image("images/no_energy.png"):
-                        logger.info("Не осталось энергии, остановка алгоритма подземелья...")
-                        logger.info(f"Сыграно боев: {self.battle_count}")
+                        UI.info("Не осталось энергии, остановка алгоритма подземелья...")
+                        UI.info(f"Сыграно боев: {self.battle_count}")
                         return 0
                 else:
                     self.find_and_click_image("images/no_energy_continue.png")
@@ -246,6 +292,10 @@ class DogiatorsAutoClicker:
                 if self.battle_boosts:
                     self.use_battle_boosts()
 
+                logger.debug("Проверка необходимости починки")
+                if self.check_repair_needed():
+                    logger.debug("Необходима починка")
+                    self.repair_equipment()
                 self.find_and_click_image("images/arena_button.png")
 
                 if self.find_and_click_image("images/3v3_mode.png"):
@@ -279,29 +329,27 @@ class DogiatorsAutoClicker:
 
                 self.open_chest()
 
-                self.find_and_click_image("images/home_button.png")
-                if self.check_repair_needed():
-                    logger.debug("Необходима починка")
-                    self.repair_equipment()
+                #self.find_and_click_image("images/home_button.png")
 
                 self.use_skills()
 
             except KeyboardInterrupt:
-                logger.info("Остановка алгоритма арены...")
-                logger.info(f"Сыграно боев: {self.battle_count}")
+                UI.info("Остановка алгоритма арены...")
+                UI.info(f"Сыграно боев: {self.battle_count}")
                 return 0
             except Exception as e:
                 logger.error(f"Ошибка в алгоритме арены 3 на 3: {e}")
+
     def arena_1v1_algorithm(self):
         """Алгоритм для арены 1 на 1"""
-        logger.info("Запуск алгоритма для арены 1 на 1...")
+        UI.info("Запуск алгоритма для арены 1 на 1...")
 
-        while True:
+        while not self.stop_event.is_set():
             try:
                 if not self.no_energy_mode:
                     if self.find_and_click_image("images/no_energy.png"):
-                        logger.info("Не осталось энергии, остановка алгоритма подземелья...")
-                        logger.info(f"Сыграно боев: {self.battle_count}")
+                        UI.info("Не осталось энергии, остановка алгоритма подземелья...")
+                        UI.info(f"Сыграно боев: {self.battle_count}")
                         return 0
                 else:
                     self.find_and_click_image("images/no_energy_continue.png")
@@ -311,8 +359,10 @@ class DogiatorsAutoClicker:
 
                 self.use_additional()
 
+                logger.debug("Поиск кнопки арены")
                 self.find_and_click_image("images/arena_button.png")
 
+                logger.debug("Поиск кнопки старта битвы")
                 self.find_and_click_image("images/start_arena_battle.png")
 
                 self.find_and_click_image("images/auto_button.png")
@@ -342,7 +392,7 @@ class DogiatorsAutoClicker:
 
                 self.open_chest()
 
-                self.find_and_click_image("images/home_button.png")
+                #self.find_and_click_image("images/home_button.png")
                 if self.check_repair_needed():
                     logger.debug("Необходима починка")
                     self.repair_equipment()
@@ -350,8 +400,8 @@ class DogiatorsAutoClicker:
                 self.use_skills()
 
             except KeyboardInterrupt:
-                logger.info("Остановка алгоритма арены...")
-                logger.info(f"Сыграно боев: {self.battle_count}")
+                UI.info("Остановка алгоритма арены...")
+                UI.info(f"Сыграно боев: {self.battle_count}")
                 return 0
             except Exception as e:
                 logger.error(f"Ошибка в алгоритме арены 1 на 1: {e}")
@@ -361,7 +411,7 @@ class DogiatorsAutoClicker:
             return self.arena_3v3_algorithm()
         elif battle_type == "1x1":
             return self.arena_1v1_algorithm()
-        elif battle_type == "dungeon":
+        elif battle_type == "Подземелье":
             return self.dungeon_algorithm()
 
         logger.error(f"Неизвестный тип боя: {battle_type}")
@@ -380,9 +430,9 @@ class DogiatorsAutoClicker:
         logger.debug(f"Поиск навыка №{self.cur_skill % len(skill_images) + 1}")
 
         start_time = time.time()
-        while time.time() - start_time < 0.3:
+        while not self.stop_event.is_set() and time.time() - start_time < 0.3:
             try:
-                center_x, center_y = pyautogui.locateCenterOnScreen(str(skill_img), confidence=0.95, region=self._region())
+                center_x, center_y = self.find_image(str(skill_img), confidence=0.95)
 
                 if center_x is not None and center_y is not None:
                     logger.debug(f"Навык найден")
@@ -400,7 +450,7 @@ class DogiatorsAutoClicker:
             start_time = time.time()
             while time.time() - start_time < 0.3:
                 try:
-                    center_x, center_y = pyautogui.locateCenterOnScreen(str(skill_images[i]), confidence=0.95, region=self._region())
+                    center_x, center_y = self.find_image(str(skill_images[i]), confidence=0.95)
 
                     if center_x is not None and center_y is not None:
                         pyautogui.doubleClick(center_x, center_y) # mac // 2 
@@ -417,7 +467,7 @@ class DogiatorsAutoClicker:
             start_time = time.time()
             while time.time() - start_time < 0.3:
                 try:
-                    center_x, center_y = pyautogui.locateCenterOnScreen(str(skill_images[i]), confidence=0.95, region=self._region())
+                    center_x, center_y = self.find_image(str(skill_images[i]), confidence=0.95)
 
                     if center_x is not None and center_y is not None:
                         pyautogui.doubleClick(center_x, center_y) # mac // 2
@@ -426,14 +476,15 @@ class DogiatorsAutoClicker:
 
     def check_for_battle_end(self):
         """Проверка окончания боя
-        -1 — бой продолжается
-        1 — победа
-        0 — поражение
+        -1 - бой продолжается
+        1 - победа
+        2 - ничья
+        0 - поражение
         """
         logger.debug("Проверка на окончания боя...")
         res = -1
         try:
-            center = pyautogui.locateCenterOnScreen("images/victory.png", confidence=0.95, region=self._region())
+            center = self.find_image("images/victory.png", confidence=0.95)
             if center:
                 res = 1
         except pyautogui.ImageNotFoundException:
@@ -444,7 +495,7 @@ class DogiatorsAutoClicker:
 
         if res == -1 :
             try:
-                center = pyautogui.locateCenterOnScreen("images/defeat.png", confidence=0.95, region=self._region())
+                center = self.find_image("images/defeat.png", confidence=0.95)
                 if center:
                     res = 0
             except pyautogui.ImageNotFoundException:
@@ -453,11 +504,23 @@ class DogiatorsAutoClicker:
                 if DEBUG:
                     print(e)
 
-        if res != -1 and self.find_and_click_image("images/continue_after_battle.png"):
+        if res == -1 :
+            try:
+                center = self.find_image("images/draw.png", confidence=0.95)
+                if center:
+                    res = 2
+            except pyautogui.ImageNotFoundException:
+                pass
+            except Exception as e:
+                if DEBUG:
+                    print(e)
+
+        if res != -1 and self.find_and_click_image("images/continue_after_battle.png", timeout=0.7):
             self.repair_counter += 1
             self.battle_count += 1
-            logger.info(f"Бой №{self.battle_count} завершён: {'победа' if res else 'поражение'}")
-        return res
+            UI.info(f"Бой №{self.battle_count} завершён: {'победа' if res else 'поражение'}")
+            return res
+        return -1
 
     def open_chest(self):
         """Открытие сундука"""
@@ -558,29 +621,69 @@ def assign_profiles_to_windows(windows, profiles):
 
 import os
 
-def run_clicker_process(region, profile, algorithm_id):
+def run_clicker_process(region, profile, algorithm, stop_event):
     try:
-        logger.info(
+        # save_region_screenshot(
+        #     region,
+        #     name=f"profile_{profile[1]}"
+        # )
+
+        UI.info(
             f"[PID {os.getpid()}] Старт профиля {profile[1]}"
         )
+        UI.info(f"▶ Алгоритм: {algorithm[1]}")
+        UI.info(f"▶ Боевые усилители: {'да' if algorithm[2] else 'нет'}")
+        UI.info(f"▶ Игра без энергии: {'да' if algorithm[3] else 'нет'}")
+
 
         clicker = DogiatorsAutoClicker(
             game_window_region=region,
-            profile=profile
+            profile=profile,
+            stop_event=stop_event
         )
+        clicker.current_algorithm = algorithm
+        clicker.battle_boosts = bool(algorithm[2])
+        clicker.no_energy_mode = bool(algorithm[3])
+        if profile:
+            next_repair = random.randint(profile[3], profile[4]) 
+            clicker.next_repair = next_repair
+            UI.success(f"Следующая починка через {next_repair}")
 
         clicker.prebattle_warnings()
+        started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        run_algorithm(clicker, algorithm[0])
 
-        run_algorithm(clicker, algorithm_id)
-
-        logger.info(
+        UI.info(
             f"[PID {os.getpid()}] Профиль {profile[1]} завершён"
         )
 
+        games, wins, losses, winrate = stats_for_run(
+            profile[0] if profile else None,
+            algorithm[0],
+            started_at
+        )
+
+        UI.info(
+            f"[PID {os.getpid()}] Итог алгоритма:"
+            f" бои={games}, победы={wins}, поражения={losses}, винрейт={winrate}%"
+        )
+
     except KeyboardInterrupt:
-        logger.info(
+        stop_event.set()
+        UI.info(
             f"[PID {os.getpid()}] Процесс остановлен пользователем"
         )
+
+        games, wins, losses, winrate = stats_for_run(
+            profile[0] if profile else None,
+            algorithm_id,
+            started_at
+        )
+        UI.info(
+            f"[PID {os.getpid()}] Итог алгоритма:"
+            f" бои={games}, победы={wins}, поражения={losses}, винрейт={winrate}%"
+        )
+
 
     except Exception as e:
         logger.error(
@@ -614,6 +717,18 @@ def action_assign_profiles():
     UI.success(f"Профили назначены. Активных окон: {len(clickers)}")
     return clickers
 
+def save_region_screenshot(region, name="region_debug"):
+    os.makedirs("debug", exist_ok=True)
+
+    img = pyautogui.screenshot(region=region)
+    ts = time.strftime("%H%M%S")
+
+    path = f"debug/{name}_{ts}.png"
+    img.save(path)
+
+    UI.info(f"[DEBUG] Region screenshot saved: {path}")
+
+
 def action_run_algorithm(clickers, algorithm):
     if not clickers:
         UI.warning("Сначала выберите профили для окон.")
@@ -623,7 +738,7 @@ def action_run_algorithm(clickers, algorithm):
         UI.warning("Сначала выберите алгоритм.")
         return
 
-    from multiprocessing import Process
+    stop_event = Event()
     processes = []
 
     UI.info(f"Запуск алгоритма: {algorithm[1]}")
@@ -634,7 +749,8 @@ def action_run_algorithm(clickers, algorithm):
             args=(
                 clicker.region,
                 clicker.current_profile,
-                algorithm[0]
+                algorithm,
+                stop_event
             )
         )
         p.start()
@@ -647,6 +763,10 @@ def action_run_algorithm(clickers, algorithm):
             p.join()
     except KeyboardInterrupt:
         UI.warning("Остановка всех процессов...")
+        stop_event.set()
+        for p in processes:
+            p.join(timeout=2)
+
         for p in processes:
             if p.is_alive():
                 p.terminate()
@@ -684,25 +804,33 @@ def action_select_algorithm():
 
 
 def show_menu(selected_algorithm):
-    UI.info("~~~~~~~~~~~~ МЕНЮ ~~~~~~~~~~~~")
+    UI.info("\n========= DOGIATORS CLICKER =========")
 
-    UI.success("4 - Выбрать профили для окон")
-    UI.success("5 - Редактировать профили")
-    UI.success("6 - Создать профиль")
+    UI.success("ПРОФИЛИ")
+    UI.info(" 1 - Выбрать профили для окон")
+    UI.info(" 2 - Создать профиль")
+    UI.info(" 3 - Редактировать профиль")
+    UI.info(" 4 - Удалить профиль")
 
-    UI.warning("7 - Создать алгоритм")
-    UI.warning("8 - Выбрать алгоритм")
+    UI.success("\nАЛГОРИТМЫ")
+    UI.info(" 5 - Создать алгоритм")
+    UI.info(" 6 - Выбрать алгоритм")
+    UI.info(" 7 - Редактировать алгоритм")
+    UI.info(" 8 - Удалить алгоритм")
 
+    UI.success("\nЗАПУСК")
     if selected_algorithm:
-        UI.success(f"9 - Запустить алгоритм ({selected_algorithm[1]})")
+        UI.info(f" 9 - Запустить алгоритм [{selected_algorithm[1]}]")
     else:
-        UI.warning("9 - Запустить алгоритм (не выбран)")
+        UI.warning(" 9 - Запустить алгоритм [не выбран]")
 
-    UI.warning("10 - Редактировать алгоритмы")
-    UI.error("11 - Статистика")
+    UI.success("\nСТАТИСТИКА")
+    UI.info("10 - Показать статистику")
+    UI.info("11 - Сбросить ВСЮ статистику")
 
-    UI.info("0 - Выход")
-    UI.info("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+    UI.error("\n0 - Выход")
+    UI.info("====================================")
+
 
 
 def main():
@@ -717,38 +845,59 @@ def main():
             UI.info("Выход...")
             break
 
-        elif choice == "4":
+        elif choice == "1":
             clickers = action_assign_profiles()
 
-        elif choice == "5":
+        elif choice == "2":
+            create_profile()
+
+        elif choice == "3":
             profile = select_profile()
             if profile:
                 edit_profile(profile[0])
 
-        elif choice == "6":
-            create_profile()
+        elif choice == "4":
+            profile = select_profile()
+            if profile:
+                delete_profile(profile[0])
 
-        elif choice == "7":
+        elif choice == "5":
             create_algorithm()
 
-        elif choice == "8":
+        elif choice == "6":
             selected_algorithm = action_select_algorithm()
 
-        elif choice == "9":
-            action_run_algorithm(clickers, selected_algorithm)
-
-        elif choice == "10":
+        elif choice == "7":
             algorithm = select_algorithm()
             if algorithm:
                 UI.info("Редактирование алгоритма:")
                 display_algorithm(algorithm[0])
                 edit_algorithm(algorithm[0])
 
-        elif choice == "11":
+        elif choice == "8":
+            algorithm = select_algorithm()
+            if algorithm:
+                delete_algorithm(algorithm[0])
+
+        elif choice == "9":
+            action_run_algorithm(clickers, selected_algorithm)
+
+        elif choice == "10":
             action_show_stats()
+
+        elif choice == "11":
+            UI.warning("Вы уверены, что хотите удалить ВСЮ статистику? (ДА/НЕТ)")
+            confirm = input("> ").strip().lower()
+
+            if confirm == "да":
+                reset_stats()
+                UI.success("Статистика полностью сброшена.")
+            else:
+                UI.info("Отмена.")
 
         else:
             UI.warning("Неверный выбор")
+
 
 if __name__ == "__main__":
     import multiprocessing

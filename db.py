@@ -22,17 +22,22 @@ def init_db():
     c.execute("""
     CREATE TABLE IF NOT EXISTS algorithms (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL
+        name TEXT NOT NULL,
+        use_boosts INTEGER DEFAULT 0,
+        no_energy_mode INTEGER DEFAULT 0
     )
     """)
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS algorithm_steps (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        algorithm_id INTEGER,
-        step_order INTEGER,
-        battle_type TEXT,
-        count INTEGER
+        algorithm_id INTEGER NOT NULL,
+        step_order INTEGER NOT NULL,
+        battle_type TEXT NOT NULL,
+        count INTEGER NOT NULL,
+        FOREIGN KEY (algorithm_id)
+            REFERENCES algorithms(id)
+            ON DELETE CASCADE
     )
     """)
 

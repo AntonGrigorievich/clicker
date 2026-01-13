@@ -24,7 +24,7 @@ class GameWindow:
 
     @property
     def region(self):
-        return (self.left, self.top, self.width, self.height)
+        return (max(0, self.left), max(0, self.top), self.width, self.height)
 
     def activate(self):
         try:

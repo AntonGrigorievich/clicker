@@ -86,7 +86,9 @@ def display_profile(profile_id=None):
         UI.warning(f"Профиль {profile_id} не найден.")
         return
 
-    UI.info(f"ID: {row[0]}\nИмя: {row[1]}\nКол-во скиллов: {row[2]}\nПочинка: {row[3]}-{row[4]}")
+    UI.info(f"ID: {row[0]}")
+    UI.success(f"Имя: {row[1]}")
+    UI.info(f"Кол-во скиллов: {row[2]}\nПочинка: {row[3]}-{row[4]}")
 
 def edit_profile(profile_id):
     conn = get_conn()
@@ -139,3 +141,45 @@ def get_all_profiles():
     rows = c.fetchall()
     conn.close()
     return rows
+
+def delete_profile(profile_id):
+    conn = get_conn()
+    c = conn.cursor()
+
+    c.execute("SELECT name FROM profiles WHERE id = ?", (profile_id,))
+    row = c.fetchone()
+
+    if not row:
+        UI.error("Профиль не найден")
+        conn.close()
+        return
+
+    name = row[0]
+    UI.warning(f"Вы уверены, что хотите удалить профиль «{name}»?")
+    UI.warning("Связанная статистика сохранится без привязки к профилю.")
+    UI.warning("Введите ДА для подтверждения: ")
+    confirm = input().strip().lower()
+
+    if confirm != "да":
+        UI.info("Удаление отменено")
+        conn.close()
+        return
+
+    try:
+        c.execute("""
+            UPDATE battle_stats
+            SET profile_id = NULL
+            WHERE profile_id = ?
+        """, (profile_id,))
+
+        c.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+        conn.commit()
+
+        UI.success(f"Профиль «{name}» удалён")
+
+    except Exception as e:
+        conn.rollback()
+        UI.error(f"Ошибка удаления профиля: {e}")
+
+    finally:
+        conn.close()

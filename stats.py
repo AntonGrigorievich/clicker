@@ -187,3 +187,39 @@ def stats_by_battle_type(date_from=None, date_to=None):
     conn.close()
     return rows
 
+def stats_for_run(profile_id, algorithm_id, started_at):
+    conn = get_conn()
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT
+            COUNT(*) as games,
+            SUM(CASE WHEN result = 1 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN result = 0 THEN 1 ELSE 0 END) as losses
+        FROM battle_stats
+        WHERE
+            (? IS NULL OR profile_id = ?)
+            AND (? IS NULL OR algorithm_id = ?)
+            AND created_at >= ?
+    """, (
+        profile_id, profile_id,
+        algorithm_id, algorithm_id,
+        started_at
+    ))
+
+    games, wins, losses = c.fetchone()
+    conn.close()
+
+    games = games or 0
+    wins = wins or 0
+    losses = losses or 0
+    winrate = round((wins / games) * 100, 2) if games else 0.0
+
+    return games, wins, losses, winrate
+
+def reset_stats():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM battle_stats")
+    conn.commit()
+    conn.close()
