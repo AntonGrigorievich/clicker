@@ -1,6 +1,8 @@
 from db import get_conn
 import sqlite3
 from utils import input_str, input_int, UI
+import shutil
+from pathlib import Path
 
 def create_profile():
     name = input_str("Имя профиля: ")
@@ -33,6 +35,15 @@ def create_profile():
             VALUES (?, ?, ?, ?)
         """, (name, skills, repair_min, repair_max))
         conn.commit()
+
+        profile_dir = Path("images/profiles") / name
+        (profile_dir / "skills").mkdir(parents=True, exist_ok=True)
+        (profile_dir / "boosters").mkdir(parents=True, exist_ok=True)
+
+        (profile_dir / "skills/_config.json").write_text("{}")
+        (profile_dir / "boosters/_config.json").write_text("{}")
+
+
         UI.success("Профиль успешно создан")
     except sqlite3.IntegrityError:
         UI.error("Ошибка: профиль с таким именем уже существует")
@@ -174,6 +185,14 @@ def delete_profile(profile_id):
 
         c.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
         conn.commit()
+
+        profile_dir = Path("images/profiles") / name
+        if profile_dir.exists():
+            try:
+                shutil.rmtree(profile_dir)
+                UI.success(f"Папка профиля удалена: {profile_dir}")
+            except Exception as e:
+                UI.warning(f"Не удалось удалить папку профиля: {e}")
 
         UI.success(f"Профиль «{name}» удалён")
 

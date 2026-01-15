@@ -14,10 +14,11 @@ def save_battle_stat(profile_id, algorithm_id, battle_type, win):
 
 def _apply_period_filter(query, params, date_from, date_to):
     if date_from:
-        query += " AND bs.created_at >= ?"
+        query += " AND datetime(bs.created_at, '+3 hours') >= ?"
         params.append(date_from)
+
     if date_to:
-        query += " AND bs.created_at <= ?"
+        query += " AND datetime(bs.created_at, '+3 hours') <= ?"
         params.append(date_to)
     return query, params
 
@@ -193,29 +194,59 @@ def stats_for_run(profile_id, algorithm_id, started_at):
 
     c.execute("""
         SELECT
-            COUNT(*) as games,
-            SUM(CASE WHEN result = 1 THEN 1 ELSE 0 END) as wins,
-            SUM(CASE WHEN result = 0 THEN 1 ELSE 0 END) as losses
+            battle_type,
+            COUNT(*)                           AS games,
+            SUM(CASE WHEN result = 1 THEN 1 ELSE 0 END) AS wins,
+            SUM(CASE WHEN result = 0 THEN 1 ELSE 0 END) AS losses
         FROM battle_stats
         WHERE
             (? IS NULL OR profile_id = ?)
             AND (? IS NULL OR algorithm_id = ?)
             AND created_at >= ?
+        GROUP BY battle_type
     """, (
         profile_id, profile_id,
         algorithm_id, algorithm_id,
         started_at
     ))
 
-    games, wins, losses = c.fetchone()
+    rows = c.fetchall()
     conn.close()
 
-    games = games or 0
-    wins = wins or 0
-    losses = losses or 0
-    winrate = round((wins / games) * 100, 2) if games else 0.0
+    result = {
+        "total": {
+            "games": 0,
+            "wins": 0,
+            "losses": 0,
+            "winrate": 0.0
+        },
+        "by_type": {}
+    }
 
-    return games, wins, losses, winrate
+    for battle_type, games, wins, losses in rows:
+        games = games or 0
+        wins = wins or 0
+        losses = losses or 0
+        winrate = round((wins / games) * 100, 2) if games else 0.0
+
+        result["by_type"][battle_type] = {
+            "games": games,
+            "wins": wins,
+            "losses": losses,
+            "winrate": winrate
+        }
+
+        result["total"]["games"] += games
+        result["total"]["wins"] += wins
+        result["total"]["losses"] += losses
+
+    total_games = result["total"]["games"]
+    result["total"]["winrate"] = (
+        round(result["total"]["wins"] / total_games * 100, 2)
+        if total_games else 0.0
+    )
+
+    return result
 
 def reset_stats():
     conn = get_conn()

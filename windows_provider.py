@@ -1,4 +1,7 @@
-import pygetwindow as gw
+import platform
+
+from windows_provider_mac import WindowProviderMac
+from windows_provider_win import WindowProviderWindows
 
 
 class GameWindow:
@@ -24,7 +27,12 @@ class GameWindow:
 
     @property
     def region(self):
-        return (max(0, self.left), max(0, self.top), self.width, self.height)
+        return (
+            max(0, self.left),
+            max(0, self.top),
+            self.width,
+            self.height
+        )
 
     def activate(self):
         try:
@@ -38,14 +46,13 @@ class GameWindow:
 
 class WindowProvider:
     def __init__(self, title_contains="Dogiators"):
-        self.title_contains = title_contains
+        if platform.system() == "Darwin":
+            self.provider = WindowProviderMac(title_contains)
+        else:
+            self.provider = WindowProviderWindows(title_contains)
 
     def get_windows(self) -> list[GameWindow]:
-        wins = gw.getWindowsWithTitle(self.title_contains)
-        result = []
-
-        for w in wins:
-            if w.width > 200 and w.height > 200:
-                result.append(GameWindow(w))
-
-        return result
+        return [
+            GameWindow(w)
+            for w in self.provider.get_windows()
+        ]
