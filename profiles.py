@@ -34,9 +34,10 @@ def create_profile():
             (name, skills_count, repair_min, repair_max)
             VALUES (?, ?, ?, ?)
         """, (name, skills, repair_min, repair_max))
+        profile_id = c.lastrowid
         conn.commit()
 
-        profile_dir = Path("images/profiles") / name
+        profile_dir = Path("images/profiles") / f"profile_{profile_id}"
         (profile_dir / "skills").mkdir(parents=True, exist_ok=True)
         (profile_dir / "boosters").mkdir(parents=True, exist_ok=True)
 
@@ -186,7 +187,7 @@ def delete_profile(profile_id):
         c.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
         conn.commit()
 
-        profile_dir = Path("images/profiles") / name
+        profile_dir = Path("images/profiles") / f"profile_{profile_id}"
         if profile_dir.exists():
             try:
                 shutil.rmtree(profile_dir)

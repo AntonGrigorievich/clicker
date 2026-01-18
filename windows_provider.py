@@ -1,8 +1,11 @@
 import platform
 
-from windows_provider_mac import WindowProviderMac
-from windows_provider_win import WindowProviderWindows
+SYSTEM = platform.system()
 
+if SYSTEM == "Darwin":
+    from windows_provider_mac import WindowProviderMac
+else:
+    from windows_provider_win import WindowProviderWindows
 
 class GameWindow:
     def __init__(self, win, profile=None):

@@ -177,7 +177,8 @@ class DogiatorsAutoClicker:
             return
 
         profile_name = self.current_profile[1]
-        base = Path("images/profiles") / profile_name
+        profile_id = self.current_profile[0]
+        base = Path("images/profiles") / f"profile_{profile_id}"
 
         def load(dir_name):
             cfg = base / dir_name / "_config.json"
@@ -231,7 +232,7 @@ class DogiatorsAutoClicker:
 
     def start_battle(self):
         # info: Функционал scroll вырезан, сайчас подземелья автоматически листается вниз
-        time.sleep(0.5)
+        time.sleep(0.7)
         logger.debug("Поиск кнопки fight")
         # for count_scroll in range(10):
         try:
@@ -484,7 +485,7 @@ class DogiatorsAutoClicker:
         
 
     def use_skills(self):
-        base = Path("images/profiles") / self.current_profile[1] / "skills"
+        base = Path("images/profiles") / f"profile_{self.current_profile[0]}" / "skills"
 
         for img_name, cooldown in self.skill_cooldowns.items():
             last = self.skill_last_used.get(img_name, 0)
@@ -521,7 +522,7 @@ class DogiatorsAutoClicker:
                     pass
 
     def use_battle_boosts(self):
-        base = Path("images/profiles") / self.current_profile[1] / "boosters"
+        base = Path("images/profiles") / f"profile_{self.current_profile[0]}" / "boosters"
 
         for img_name, cooldown in self.booster_cooldowns.items():
             last = self.booster_last_used.get(img_name, 0)
@@ -690,6 +691,7 @@ def assign_profiles_to_windows(windows, profiles):
 import os
 
 def run_clicker_process(region, profile, algorithm, stop_event):
+    started_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     try:
         # save_region_screenshot(
         #     region,
@@ -819,7 +821,8 @@ def setup_profile_cooldowns():
         return
 
     profile_name = profile[1]
-    base = Path("images/profiles") / profile_name
+    profile_id = profile[0]
+    base = Path("images/profiles") / f"profile_{profile_id}"
 
     UI.info("\nЧто настраиваем?")
     UI.info("1 - Навыки")
